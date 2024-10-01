@@ -15,22 +15,28 @@ class _SignupScreenState extends State<SignupScreen> {
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   final TextEditingController confirmPasswordController = TextEditingController();
-  String? selectedPosition;
+  String? selectedRole;
   final _formKey = GlobalKey<FormState>();
 
-  final List<String> positions = [
-    'Goalkeeper',
-    'Defender',
-    'Midfielder',
-    'Forward',
-    'Center',
-    'Wing',
-    'Striker',
+  final List<String> roles = [
+    'Player',
+    'Admin',
   ];
 
   Future<void> _signup() async {
     if (_formKey.currentState?.validate() ?? false) {
       try {
+        // Check if admin already exists
+        if (selectedRole == 'Admin') {
+          var adminSnapshot = await FirebaseFirestore.instance.collection('users').where('role', isEqualTo: 'Admin').get();
+          if (adminSnapshot.docs.isNotEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('An admin already exists. Choose another role.')),
+            );
+            return;
+          }
+        }
+
         // Create user in Firebase Auth
         UserCredential userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
           email: emailController.text,
@@ -43,7 +49,7 @@ class _SignupScreenState extends State<SignupScreen> {
           'age': int.parse(ageController.text),
           'email': emailController.text,
           'phone': phoneController.text,
-          'position': selectedPosition,
+          'role': selectedRole,
         });
 
         // Show success message
@@ -52,7 +58,7 @@ class _SignupScreenState extends State<SignupScreen> {
         );
 
         // Navigate to the login screen
-        Navigator.of(context).push(MaterialPageRoute(builder: (context)=>LoginScreen()));
+        Navigator.of(context).push(MaterialPageRoute(builder: (context) => LoginScreen()));
       } catch (e) {
         // Show error message
         ScaffoldMessenger.of(context).showSnackBar(
@@ -76,7 +82,6 @@ class _SignupScreenState extends State<SignupScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Name Field
               TextFormField(
                 controller: nameController,
                 decoration: InputDecoration(
@@ -87,8 +92,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 validator: (value) => value?.isEmpty ?? true ? 'Please enter your name' : null,
               ),
               const SizedBox(height: 15),
-
-              // Age Field
               TextFormField(
                 controller: ageController,
                 decoration: InputDecoration(
@@ -100,8 +103,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 validator: (value) => value?.isEmpty ?? true ? 'Please enter your age' : null,
               ),
               const SizedBox(height: 15),
-
-              // Email Field
               TextFormField(
                 controller: emailController,
                 decoration: InputDecoration(
@@ -113,8 +114,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 validator: (value) => value?.isEmpty ?? true ? 'Please enter your email' : null,
               ),
               const SizedBox(height: 15),
-
-              // Phone Number Field
               TextFormField(
                 controller: phoneController,
                 decoration: InputDecoration(
@@ -126,31 +125,27 @@ class _SignupScreenState extends State<SignupScreen> {
                 validator: (value) => value?.isEmpty ?? true ? 'Please enter your phone number' : null,
               ),
               const SizedBox(height: 15),
-
-              // Position Dropdown
               DropdownButtonFormField<String>(
-                value: selectedPosition,
+                value: selectedRole,
                 decoration: InputDecoration(
-                  labelText: 'Position',
+                  labelText: 'Role',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.sports_soccer),
+                  prefixIcon: Icon(Icons.person_outline),
                 ),
-                items: positions.map((position) {
+                items: roles.map((role) {
                   return DropdownMenuItem<String>(
-                    value: position,
-                    child: Text(position),
+                    value: role,
+                    child: Text(role),
                   );
                 }).toList(),
                 onChanged: (newValue) {
                   setState(() {
-                    selectedPosition = newValue;
+                    selectedRole = newValue;
                   });
                 },
-                validator: (value) => value == null ? 'Please select a position' : null,
+                validator: (value) => value == null ? 'Please select a role' : null,
               ),
               const SizedBox(height: 15),
-
-              // Password Field
               TextFormField(
                 controller: passwordController,
                 decoration: InputDecoration(
@@ -162,8 +157,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 validator: (value) => value?.isEmpty ?? true ? 'Please enter your password' : null,
               ),
               const SizedBox(height: 15),
-
-              // Confirm Password Field
               TextFormField(
                 controller: confirmPasswordController,
                 decoration: InputDecoration(
@@ -183,8 +176,6 @@ class _SignupScreenState extends State<SignupScreen> {
                 },
               ),
               const SizedBox(height: 30),
-
-              // Signup Button
               ElevatedButton(
                 onPressed: _signup,
                 style: ElevatedButton.styleFrom(

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:futsal_app/screens/signin_screen.dart';
-import 'home_screen.dart'; // Update with the correct path
-
-import 'forgot_password_screen.dart'; // Update with the correct path
+import 'package:cloud_firestore/cloud_firestore.dart'; // Import the cloud_firestore package
+import 'package:futsal_app/screens/home_screen.dart'; // Update with the correct path to your HomeScreen
+import 'package:futsal_app/screens/admin_screen.dart'; // Ensure AdminScreen is imported correctly
+import 'package:futsal_app/screens/signin_screen.dart'; // Import your SignupScreen
+import 'package:futsal_app/screens/forgot_password_screen.dart'; // Import your ForgotPasswordScreen
 
 class LoginScreen extends StatelessWidget {
   final TextEditingController emailController = TextEditingController();
@@ -11,30 +12,31 @@ class LoginScreen extends StatelessWidget {
 
   Future<void> _login(BuildContext context) async {
     try {
-      // Sign in with Firebase Auth
       UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: emailController.text,
         password: passwordController.text,
       );
 
-      // Navigate to HomeScreen if login is successful
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => HomeScreen()),
-      );
-    } on FirebaseAuthException catch (e) {
-      // Handle different errors
-      String errorMessage = 'An error occurred';
-      if (e.code == 'user-not-found') {
-        errorMessage = 'No user found with this email.';
-      } else if (e.code == 'wrong-password') {
-        errorMessage = 'Incorrect password.';
-      } else if (e.code == 'invalid-email') {
-        errorMessage = 'Invalid email address.';
-      }
+      // Retrieve role from Firestore
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCredential.user?.uid)
+          .get();
+      String role = userDoc['role'];
 
-      // Show error message
+      // Navigate to the appropriate screen based on the role
+      if (role == 'Admin') {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => AdminScreen()),
+        );
+      } else {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => HomeScreen()),
+        );
+      }
+    } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMessage)),
+        SnackBar(content: Text('Error: ${e.toString()}')),
       );
     }
   }
