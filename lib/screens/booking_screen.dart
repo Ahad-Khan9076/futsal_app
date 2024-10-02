@@ -1,10 +1,12 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+
 import '../model/local_notification_services.dart';
 
-
 class CreateBookingScreen extends StatefulWidget {
+  const CreateBookingScreen({super.key});
+
   @override
   _CreateBookingScreenState createState() => _CreateBookingScreenState();
 }
@@ -15,6 +17,33 @@ class _CreateBookingScreenState extends State<CreateBookingScreen> {
   final _bookingNameController = TextEditingController();
   final _numOfTeamsController = TextEditingController();
   final _firestore = FirebaseFirestore.instance;
+  bool isBookingBlocked = false; // Track if booking is blocked
+  bool isLoading = true; // Track if data is still loading
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBookingStatus();
+  }
+
+  Future<void> _checkBookingStatus() async {
+    try {
+      // Fetch booking block status from Firestore
+      DocumentSnapshot bookingBlockStatus = await _firestore
+          .collection('booking_block')
+          .doc('block_status') // Assuming the document ID is 'status'
+          .get();
+      setState(() {
+        isBookingBlocked = bookingBlockStatus['block_all_bookings'] ?? false;
+        isLoading = false;
+      });
+    } catch (e) {
+      print('Error fetching booking status: $e');
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
 
   Future<void> _selectDate(BuildContext context) async {
     DateTime? picked = await showDatePicker(
@@ -23,10 +52,11 @@ class _CreateBookingScreenState extends State<CreateBookingScreen> {
       firstDate: DateTime.now(),
       lastDate: DateTime(2101),
     );
-    if (picked != null && picked != selectedDate)
+    if (picked != null && picked != selectedDate) {
       setState(() {
         selectedDate = picked;
       });
+    }
   }
 
   Future<void> _selectTime(BuildContext context) async {
@@ -34,59 +64,104 @@ class _CreateBookingScreenState extends State<CreateBookingScreen> {
       context: context,
       initialTime: selectedTime,
     );
-    if (picked != null && picked != selectedTime)
+    if (picked != null && picked != selectedTime) {
       setState(() {
         selectedTime = picked;
       });
+    }
   }
 
   Future<void> _confirmBooking() async {
     if (_bookingNameController.text.isEmpty ||
         _numOfTeamsController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please fill all fields')),
+        const SnackBar(content: Text('Please fill all fields')),
+      );
+      return;
+    }
+
+    DateTime bookingDateTime = DateTime(
+      selectedDate.year,
+      selectedDate.month,
+      selectedDate.day,
+      selectedTime.hour,
+      selectedTime.minute,
+    );
+
+    if (bookingDateTime.isBefore(DateTime.now())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Please select a date and time in the future')),
+      );
+      return;
+    }
+
+    // Check if there is an existing booking at the same time
+    bool isExistingBooking = await _checkExistingBooking(bookingDateTime);
+
+    if (isExistingBooking) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'This time slot is already booked. Please choose another time.')),
       );
       return;
     }
 
     try {
-      // Add booking to Firestore
       await _firestore.collection('bookings').add({
         'name': _bookingNameController.text,
         'date': selectedDate,
         'time': selectedTime.format(context),
         'number_of_teams': int.parse(_numOfTeamsController.text),
         'day': _getDayOfWeek(selectedDate),
-        'userId': FirebaseAuth.instance.currentUser?.uid, // Include userId
+        'booking_status': 'Pending',
+        'userId': FirebaseAuth.instance.currentUser?.uid,
       });
 
-      // Schedule notification
-      DateTime bookingDateTime = DateTime(
-        selectedDate.year,
-        selectedDate.month,
-        selectedDate.day,
-        selectedTime.hour,
-        selectedTime.minute,
-      );
-
-      // Schedule the notification
       await LocalNotificationService.scheduleNotification(
-        id: 1, // You can generate a unique ID for each booking
+        id: 1,
         scheduledTime: bookingDateTime,
         title: 'Booking Reminder',
-        body: 'Reminder for your booking with ${_bookingNameController.text} at ${selectedTime.format(context)}',
+        body:
+            'Reminder for your booking with ${_bookingNameController.text} at ${selectedTime.format(context)}',
       );
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Booking Confirmed')),
+        const SnackBar(content: Text('Booking Confirmed')),
       );
 
       Navigator.of(context).pop();
     } catch (e) {
       print('Error adding booking: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to confirm booking')),
+        const SnackBar(content: Text('Failed to confirm booking')),
       );
+    }
+  }
+
+  Future<bool> _checkExistingBooking(DateTime bookingDateTime) async {
+    try {
+      QuerySnapshot bookingSnapshot = await _firestore
+          .collection('bookings')
+          .where('date',
+              isEqualTo: DateTime(bookingDateTime.year, bookingDateTime.month,
+                  bookingDateTime.day))
+          .where('time',
+              isEqualTo: TimeOfDay(
+                      hour: bookingDateTime.hour,
+                      minute: bookingDateTime.minute)
+                  .format(context))
+          .get();
+
+      // If any booking already exists for the same date and time
+      if (bookingSnapshot.docs.isNotEmpty) {
+        return true; // A booking already exists
+      }
+      return false; // No existing booking found
+    } catch (e) {
+      print('Error checking existing booking: $e');
+      return false;
     }
   }
 
@@ -113,86 +188,105 @@ class _CreateBookingScreenState extends State<CreateBookingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('Create Booking'),
+        title: const Text('Create Booking'),
         backgroundColor: Colors.deepOrange,
       ),
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Booking Name
-              TextField(
-                controller: _bookingNameController,
-                decoration: InputDecoration(
-                  labelText: 'Name of Booking Person',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              SizedBox(height: 16),
-              // Date Picker
-              TextButton(
-                onPressed: () => _selectDate(context),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.deepOrange,
-                  backgroundColor: Colors.grey[200],
-                  padding: EdgeInsets.symmetric(vertical: 15),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: Text(
-                  'Select Date: ${selectedDate.toShortDateString()}',
-                  style: TextStyle(fontSize: 16),
-                ),
-              ),
-              SizedBox(height: 16),
-              // Time Picker
-              TextButton(
-                onPressed: () => _selectTime(context),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.deepOrange,
-                  backgroundColor: Colors.grey[200],
-                  padding: EdgeInsets.symmetric(vertical: 15),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: Text(
-                  'Select Time: ${selectedTime.format(context)}',
-                  style: TextStyle(fontSize: 16),
-                ),
-              ),
-              SizedBox(height: 16),
-              // Number of Teams
-              TextField(
-                controller: _numOfTeamsController,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Number of Teams',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              SizedBox(height: 16),
-              // Confirm Booking Button
-              Center(
-                child: ElevatedButton(
-                  onPressed: _confirmBooking,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.deepOrange,
-                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
+          child: isBookingBlocked
+              ? const Center(
+                  child: Text(
+                    'Bookings are currently blocked. Please try again later.',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red,
                     ),
+                    textAlign: TextAlign.center,
                   ),
-                  child: Text('Confirm Booking'),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Booking Name
+                    TextField(
+                      controller: _bookingNameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Name of Booking Person',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Date Picker
+                    TextButton(
+                      onPressed: () => _selectDate(context),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.deepOrange,
+                        backgroundColor: Colors.grey[200],
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: Text(
+                        'Select Date: ${selectedDate.toShortDateString()}',
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Time Picker
+                    TextButton(
+                      onPressed: () => _selectTime(context),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.deepOrange,
+                        backgroundColor: Colors.grey[200],
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: Text(
+                        'Select Time: ${selectedTime.format(context)}',
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Number of Teams
+                    TextField(
+                      controller: _numOfTeamsController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Number of Teams',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Confirm Booking Button
+                    Center(
+                      child: ElevatedButton(
+                        onPressed: _confirmBooking,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.deepOrange,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 15),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                        child: const Text('Confirm Booking'),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -201,6 +295,6 @@ class _CreateBookingScreenState extends State<CreateBookingScreen> {
 
 extension on DateTime {
   String toShortDateString() {
-    return '${this.day.toString().padLeft(2, '0')}/${this.month.toString().padLeft(2, '0')}/${this.year}';
+    return '${day.toString().padLeft(2, '0')}/${month.toString().padLeft(2, '0')}/$year';
   }
 }
